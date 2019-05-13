@@ -17,10 +17,10 @@ package build
 import (
 	"sync"
 
-	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/ko/pkg/steve"
 )
 
-func newFuture(work func() (v1.Image, error)) *future {
+func newFuture(work func() (steve.Interface, error)) *future {
 	// Create a channel on which to send the result.
 	ch := make(chan *result)
 	// Initiate the actual work, sending its result
@@ -40,7 +40,7 @@ func newFuture(work func() (v1.Image, error)) *future {
 }
 
 type result struct {
-	img v1.Image
+	img steve.Interface
 	err error
 }
 
@@ -52,7 +52,7 @@ type future struct {
 }
 
 // Get blocks on the result of the future.
-func (f *future) Get() (v1.Image, error) {
+func (f *future) Get() (steve.Interface, error) {
 	// Block on the promise of a result until we get one.
 	result, ok := <-f.promise
 	if ok {

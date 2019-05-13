@@ -15,7 +15,7 @@
 package build
 
 import (
-	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/ko/pkg/steve"
 )
 
 // Interface abstracts different methods for turning a supported importpath
@@ -27,5 +27,5 @@ type Interface interface {
 	IsSupportedReference(string) bool
 
 	// Build turns the given importpath reference into a v1.Image containing the Go binary.
-	Build(string) (v1.Image, error)
+	Build(string) (steve.Interface, error)
 }

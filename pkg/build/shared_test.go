@@ -18,8 +18,8 @@ import (
 	"testing"
 	"time"
 
-	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/random"
+	"github.com/google/ko/pkg/steve"
 )
 
 type slowbuild struct {
@@ -33,9 +33,13 @@ func (sb *slowbuild) IsSupportedReference(string) bool {
 	return true
 }
 
-func (sb *slowbuild) Build(string) (v1.Image, error) {
+func (sb *slowbuild) Build(string) (steve.Interface, error) {
 	time.Sleep(sb.sleep)
-	return random.Image(256, 8)
+	img, err := random.Image(256, 8)
+	if err != nil {
+		return nil, err
+	}
+	return steve.Image(img)
 }
 
 func TestCaching(t *testing.T) {

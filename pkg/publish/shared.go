@@ -18,7 +18,7 @@ import (
 	"sync"
 
 	"github.com/google/go-containerregistry/pkg/name"
-	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/ko/pkg/steve"
 )
 
 // caching wraps a publisher implementation in a layer that shares publish results
@@ -33,7 +33,7 @@ type caching struct {
 // entry holds the last image published and the result of publishing it for a
 // particular reference.
 type entry struct {
-	img v1.Image
+	img steve.Interface
 	f   *future
 }
 
@@ -50,7 +50,7 @@ func NewCaching(inner Interface) (Interface, error) {
 }
 
 // Publish implements Interface
-func (c *caching) Publish(img v1.Image, ref string) (name.Reference, error) {
+func (c *caching) Publish(img steve.Interface, ref string) (name.Reference, error) {
 	f := func() *future {
 		// Lock the map of futures.
 		c.m.Lock()

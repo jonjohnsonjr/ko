@@ -26,12 +26,17 @@ import (
 
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/random"
+	"github.com/google/ko/pkg/steve"
 )
 
 func TestDefault(t *testing.T) {
 	img, err := random.Image(1024, 1)
 	if err != nil {
 		t.Fatalf("random.Image() = %v", err)
+	}
+	st, err := steve.Image(img)
+	if err != nil {
+		t.Fatalf("steve.Image() = %v", err)
 	}
 	base := "blah"
 	importpath := "github.com/Google/go-containerregistry/cmd/crane"
@@ -77,7 +82,7 @@ func TestDefault(t *testing.T) {
 	if err != nil {
 		t.Errorf("NewDefault() = %v", err)
 	}
-	if d, err := def.Publish(img, importpath); err != nil {
+	if d, err := def.Publish(st, importpath); err != nil {
 		t.Errorf("Publish() = %v", err)
 	} else if !strings.HasPrefix(d.String(), tag.Repository.String()) {
 		t.Errorf("Publish() = %v, wanted prefix %v", d, tag.Repository)
@@ -95,6 +100,10 @@ func TestDefaultWithCustomNamer(t *testing.T) {
 	img, err := random.Image(1024, 1)
 	if err != nil {
 		t.Fatalf("random.Image() = %v", err)
+	}
+	st, err := steve.Image(img)
+	if err != nil {
+		t.Fatalf("steve.Image() = %v", err)
 	}
 	base := "blah"
 	importpath := "github.com/Google/go-containerregistry/cmd/crane"
@@ -141,7 +150,7 @@ func TestDefaultWithCustomNamer(t *testing.T) {
 	if err != nil {
 		t.Errorf("NewDefault() = %v", err)
 	}
-	if d, err := def.Publish(img, importpath); err != nil {
+	if d, err := def.Publish(st, importpath); err != nil {
 		t.Errorf("Publish() = %v", err)
 	} else if !strings.HasPrefix(d.String(), repoName) {
 		t.Errorf("Publish() = %v, wanted prefix %v", d, tag.Repository)
@@ -154,6 +163,10 @@ func TestDefaultWithTags(t *testing.T) {
 	img, err := random.Image(1024, 1)
 	if err != nil {
 		t.Fatalf("random.Image() = %v", err)
+	}
+	st, err := steve.Image(img)
+	if err != nil {
+		t.Fatalf("steve.Image() = %v", err)
 	}
 	base := "blah"
 	importpath := "github.com/Google/go-containerregistry/cmd/crane"
@@ -205,7 +218,7 @@ func TestDefaultWithTags(t *testing.T) {
 	if err != nil {
 		t.Errorf("NewDefault() = %v", err)
 	}
-	if d, err := def.Publish(img, importpath); err != nil {
+	if d, err := def.Publish(st, importpath); err != nil {
 		t.Errorf("Publish() = %v", err)
 	} else if !strings.HasPrefix(d.String(), repoName) {
 		t.Errorf("Publish() = %v, wanted prefix %v", d, tag.Repository)

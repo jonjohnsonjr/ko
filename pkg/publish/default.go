@@ -22,8 +22,10 @@ import (
 
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
-	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/v1/types"
+	"github.com/google/ko/pkg/steve"
 )
 
 // defalt is intentionally misspelled to avoid keyword collision (and drive Jon nuts).
@@ -90,10 +92,11 @@ func NewDefault(base string, options ...Option) (Interface, error) {
 }
 
 // Publish implements publish.Interface
-func (d *defalt) Publish(img v1.Image, s string) (name.Reference, error) {
+func (d *defalt) Publish(st steve.Interface, s string) (name.Reference, error) {
 	// https://github.com/google/go-containerregistry/issues/212
 	s = strings.ToLower(s)
 
+	var h v1.Hash
 	for _, tagName := range d.tags {
 		tag, err := name.NewTag(fmt.Sprintf("%s/%s:%s", d.base, d.namer(s), tagName))
 		if err != nil {
@@ -101,16 +104,35 @@ func (d *defalt) Publish(img v1.Image, s string) (name.Reference, error) {
 		}
 
 		log.Printf("Publishing %v", tag)
-		// TODO: This is slow because we have to load the image multiple times.
-		// Figure out some way to publish the manifest with another tag.
-		if err := remote.Write(tag, img, d.auth, d.t); err != nil {
-			return nil, err
-		}
-	}
 
-	h, err := img.Digest()
-	if err != nil {
-		return nil, err
+		switch st.Type() {
+		case types.DockerManifestList, types.OCIImageIndex:
+			idx, err := st.ImageIndex()
+			if err != nil {
+				return nil, err
+			}
+			if err := remote.WriteIndex(tag, idx, d.auth, d.t); err != nil {
+				return nil, err
+			}
+			h, err = idx.Digest()
+			if err != nil {
+				return nil, err
+			}
+		default:
+			img, err := st.Image()
+			if err != nil {
+				return nil, err
+			}
+			// TODO: This is slow because we have to load the image multiple times.
+			// Figure out some way to publish the manifest with another tag.
+			if err := remote.Write(tag, img, d.auth, d.t); err != nil {
+				return nil, err
+			}
+			h, err = img.Digest()
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 	dig, err := name.NewDigest(fmt.Sprintf("%s/%s@%s", d.base, d.namer(s), h))
 	if err != nil {

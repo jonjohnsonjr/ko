@@ -20,8 +20,8 @@ import (
 	"strings"
 
 	"github.com/google/go-containerregistry/pkg/name"
-	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/daemon"
+	"github.com/google/ko/pkg/steve"
 )
 
 const (
@@ -41,10 +41,14 @@ func NewDaemon(namer Namer, tags []string) Interface {
 }
 
 // Publish implements publish.Interface
-func (d *demon) Publish(img v1.Image, s string) (name.Reference, error) {
+func (d *demon) Publish(st steve.Interface, s string) (name.Reference, error) {
 	// https://github.com/google/go-containerregistry/issues/212
 	s = strings.ToLower(s)
 
+	img, err := st.Image()
+	if err != nil {
+		return nil, err
+	}
 	h, err := img.Digest()
 	if err != nil {
 		return nil, err

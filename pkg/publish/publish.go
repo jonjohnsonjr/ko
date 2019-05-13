@@ -16,7 +16,7 @@ package publish
 
 import (
 	"github.com/google/go-containerregistry/pkg/name"
-	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/ko/pkg/steve"
 )
 
 // Interface abstracts different methods for publishing images.
@@ -24,5 +24,5 @@ type Interface interface {
 	// Publish uploads the given v1.Image to a registry incorporating the
 	// provided string into the image's repository name.  Returns the digest
 	// of the published image.
-	Publish(v1.Image, string) (name.Reference, error)
+	Publish(steve.Interface, string) (name.Reference, error)
 }

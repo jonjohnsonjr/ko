@@ -25,21 +25,33 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/v1/types"
+	"github.com/google/ko/pkg/steve"
 	"github.com/spf13/viper"
 )
+
+// Wrap remote.Descriptor in something to satisfy the steve.Interface
+type remoteBase struct {
+	*remote.Descriptor
+}
+
+func (rb remoteBase) Type() types.MediaType {
+	return rb.MediaType
+}
 
 var (
 	defaultBaseImage   name.Reference
 	baseImageOverrides map[string]name.Reference
 )
 
-func getBaseImage(s string) (v1.Image, error) {
+func getBaseImage(s string) (steve.Interface, error) {
 	ref, ok := baseImageOverrides[s]
 	if !ok {
 		ref = defaultBaseImage
 	}
 	log.Printf("Using base %s for %s", ref, s)
-	return remote.Image(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
+	desc, err := remote.Get(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
+	return remoteBase{desc}, err
 }
 
 func getCreationTime() (*v1.Time, error) {

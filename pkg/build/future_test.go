@@ -17,15 +17,23 @@ package build
 import (
 	"testing"
 
-	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/random"
+	"github.com/google/ko/pkg/steve"
 )
 
-func makeImage() (v1.Image, error) {
-	return random.Image(256, 8)
+func makeImage() (steve.Interface, error) {
+	img, err := random.Image(256, 8)
+	if err != nil {
+		return nil, err
+	}
+	return steve.Image(img)
 }
 
-func digest(t *testing.T, img v1.Image) string {
+func digest(t *testing.T, st steve.Interface) string {
+	img, err := st.Image()
+	if err != nil {
+		t.Fatalf("Image() = %v", err)
+	}
 	d, err := img.Digest()
 	if err != nil {
 		t.Fatalf("Digest() = %v", err)

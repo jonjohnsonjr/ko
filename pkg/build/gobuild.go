@@ -18,6 +18,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"errors"
+	"fmt"
 	gb "go/build"
 	"io"
 	"io/ioutil"
@@ -29,6 +30,8 @@ import (
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
+	"github.com/google/go-containerregistry/pkg/v1/types"
+	"github.com/google/ko/pkg/steve"
 )
 
 const (
@@ -36,14 +39,14 @@ const (
 	defaultAppFilename = "ko-app"
 )
 
-// GetBase takes an importpath and returns a base v1.Image.
-type GetBase func(string) (v1.Image, error)
-type builder func(string, bool) (string, error)
+// GetBase takes an importpath and returns a steve.Interface.
+type GetBase func(string) (steve.Interface, error)
+type builder func(string, v1.Platform, bool) (string, error)
 
 type gobuild struct {
-	getBase      GetBase
-	creationTime v1.Time
-	build        builder
+	getBase              GetBase
+	creationTime         v1.Time
+	build                builder
 	disableOptimizations bool
 }
 
@@ -51,9 +54,9 @@ type gobuild struct {
 type Option func(*gobuildOpener) error
 
 type gobuildOpener struct {
-	getBase      GetBase
-	creationTime v1.Time
-	build        builder
+	getBase              GetBase
+	creationTime         v1.Time
+	build                builder
 	disableOptimizations bool
 }
 
@@ -62,9 +65,9 @@ func (gbo *gobuildOpener) Open() (Interface, error) {
 		return nil, errors.New("a way of providing base images must be specified, see build.WithBaseImages")
 	}
 	return &gobuild{
-		getBase:      gbo.getBase,
-		creationTime: gbo.creationTime,
-		build:        gbo.build,
+		getBase:              gbo.getBase,
+		creationTime:         gbo.creationTime,
+		build:                gbo.build,
 		disableOptimizations: gbo.disableOptimizations,
 	}, nil
 }
@@ -97,7 +100,7 @@ func (*gobuild) IsSupportedReference(s string) bool {
 	return p.IsCommand()
 }
 
-func build(ip string, disableOptimizations bool) (string, error) {
+func build(ip string, p v1.Platform, disableOptimizations bool) (string, error) {
 	tmpDir, err := ioutil.TempDir("", "ko")
 	if err != nil {
 		return "", err
@@ -115,8 +118,7 @@ func build(ip string, disableOptimizations bool) (string, error) {
 	cmd := exec.Command("go", args...)
 
 	// Last one wins
-	// TODO(mattmoor): GOARCH=amd64
-	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux")
+	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS="+p.OS, "GOARCH=", p.Architecture)
 
 	var output bytes.Buffer
 	cmd.Stderr = &output
@@ -281,10 +283,19 @@ func tarKoData(importpath string) (*bytes.Buffer, error) {
 	return buf, nil
 }
 
-// Build implements build.Interface
-func (gb *gobuild) Build(s string) (v1.Image, error) {
+func (gb *gobuild) buildImage(s string, base v1.Image) (v1.Image, error) {
+	baseCfg, err := base.ConfigFile()
+	if err != nil {
+		return nil, err
+	}
+
+	p := v1.Platform{
+		Architecture: baseCfg.Architecture,
+		OS:           baseCfg.OS,
+	}
+
 	// Do the build into a temporary file.
-	file, err := gb.build(s, gb.disableOptimizations)
+	file, err := gb.build(s, p, gb.disableOptimizations)
 	if err != nil {
 		return nil, err
 	}
@@ -321,12 +332,6 @@ func (gb *gobuild) Build(s string) (v1.Image, error) {
 	}
 	layers = append(layers, binaryLayer)
 
-	// Determine the appropriate base image for this import path.
-	base, err := gb.getBase(s)
-	if err != nil {
-		return nil, err
-	}
-
 	// Augment the base image with our application layer.
 	withApp, err := mutate.AppendLayers(base, layers...)
 	if err != nil {
@@ -354,4 +359,30 @@ func (gb *gobuild) Build(s string) (v1.Image, error) {
 		return mutate.CreatedAt(image, gb.creationTime)
 	}
 	return image, nil
+}
+
+// Build implements build.Interface
+func (gb *gobuild) Build(s string) (steve.Interface, error) {
+	// Determine the appropriate base image for this import path.
+	base, err := gb.getBase(s)
+	if err != nil {
+		return nil, err
+	}
+
+	switch base.Type() {
+	case types.OCIImageIndex, types.DockerManifestList:
+		// We need to publish an image for each entry in the index.
+	default:
+		baseImage, err := base.Image()
+		if err != nil {
+			return nil, err
+		}
+		img, err := gb.buildImage(s, baseImage)
+		if err != nil {
+			return nil, err
+		}
+		return steve.Image(img)
+	}
+
+	return nil, fmt.Errorf("oops")
 }

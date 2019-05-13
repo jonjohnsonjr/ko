@@ -24,6 +24,7 @@ import (
 
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/random"
+	"github.com/google/ko/pkg/steve"
 )
 
 func TestGoBuildIsSupportedRef(t *testing.T) {
@@ -32,7 +33,7 @@ func TestGoBuildIsSupportedRef(t *testing.T) {
 		t.Fatalf("random.Image() = %v", err)
 	}
 
-	ng, err := NewGo(WithBaseImages(func(string) (v1.Image, error) { return base, nil }))
+	ng, err := NewGo(WithBaseImages(func(string) (steve.Interface, error) { return steve.Image(base) }))
 	if err != nil {
 		t.Fatalf("NewGo() = %v", err)
 	}
@@ -62,7 +63,7 @@ func TestGoBuildIsSupportedRef(t *testing.T) {
 }
 
 // A helper method we use to substitute for the default "build" method.
-func writeTempFile(s string, _ bool) (string, error) {
+func writeTempFile(s string, _ v1.Platform, _ bool) (string, error) {
 	tmpDir, err := ioutil.TempDir("", "ko")
 	if err != nil {
 		return "", err
@@ -90,16 +91,21 @@ func TestGoBuildNoKoData(t *testing.T) {
 	creationTime := v1.Time{time.Unix(5000, 0)}
 	ng, err := NewGo(
 		WithCreationTime(creationTime),
-		WithBaseImages(func(string) (v1.Image, error) { return base, nil }),
+		WithBaseImages(func(string) (steve.Interface, error) { return steve.Image(base) }),
 		withBuilder(writeTempFile),
 	)
 	if err != nil {
 		t.Fatalf("NewGo() = %v", err)
 	}
 
-	img, err := ng.Build(filepath.Join(importpath, "cmd", "ko"))
+	st, err := ng.Build(filepath.Join(importpath, "cmd", "ko"))
 	if err != nil {
 		t.Fatalf("Build() = %v", err)
+	}
+
+	img, err := st.Image()
+	if err != nil {
+		t.Fatalf("Image() = %v", err)
 	}
 
 	ls, err := img.Layers()
@@ -170,16 +176,21 @@ func TestGoBuild(t *testing.T) {
 	creationTime := v1.Time{time.Unix(5000, 0)}
 	ng, err := NewGo(
 		WithCreationTime(creationTime),
-		WithBaseImages(func(string) (v1.Image, error) { return base, nil }),
+		WithBaseImages(func(string) (steve.Interface, error) { return steve.Image(base) }),
 		withBuilder(writeTempFile),
 	)
 	if err != nil {
 		t.Fatalf("NewGo() = %v", err)
 	}
 
-	img, err := ng.Build(filepath.Join(importpath, "cmd", "ko", "test"))
+	st, err := ng.Build(filepath.Join(importpath, "cmd", "ko", "test"))
 	if err != nil {
 		t.Fatalf("Build() = %v", err)
+	}
+
+	img, err := st.Image()
+	if err != nil {
+		t.Fatalf("Image() = %v", err)
 	}
 
 	ls, err := img.Layers()

@@ -17,7 +17,7 @@ package build
 import (
 	"sync"
 
-	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/ko/pkg/steve"
 )
 
 // Recorder composes with another Interface to record the built import paths.
@@ -36,7 +36,7 @@ func (r *Recorder) IsSupportedReference(ip string) bool {
 }
 
 // Build implements Interface
-func (r *Recorder) Build(ip string) (v1.Image, error) {
+func (r *Recorder) Build(ip string) (steve.Interface, error) {
 	func() {
 		r.m.Lock()
 		defer r.m.Unlock()

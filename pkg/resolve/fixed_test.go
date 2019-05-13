@@ -23,11 +23,13 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/random"
 	"github.com/google/ko/pkg/build"
 	"github.com/google/ko/pkg/publish"
+	"github.com/google/ko/pkg/steve"
 )
 
 var (
 	fixedBaseRepo, _ = name.NewRepository("gcr.io/asdf")
 	testImage, _     = random.Image(1024, 5)
+	testSteve, _     = steve.Image(testImage)
 )
 
 func TestFixedPublish(t *testing.T) {
@@ -75,9 +77,9 @@ func TestFixedBuild(t *testing.T) {
 		t.Errorf("IsSupportedReference(asdf) = %v, want %v", got, want)
 	}
 	if got, err := f.Build("asdf"); err != nil {
-		t.Errorf("Build(asdf) = %v, want %v", err, testImage)
-	} else if got != testImage {
-		t.Errorf("Build(asdf) = %v, want %v", got, testImage)
+		t.Errorf("Build(asdf) = %v, want %v", err, testSteve)
+	} else if got != testSteve {
+		t.Errorf("Build(asdf) = %v, want %v", got, testSteve)
 	}
 
 	if got, want := f.IsSupportedReference("blah"), false; got != want {
@@ -105,9 +107,9 @@ func (f *fixedBuild) IsSupportedReference(s string) bool {
 }
 
 // Build implements build.Interface
-func (f *fixedBuild) Build(s string) (v1.Image, error) {
+func (f *fixedBuild) Build(s string) (steve.Interface, error) {
 	if img, ok := f.entries[s]; ok {
-		return img, nil
+		return steve.Image(img)
 	}
 	return nil, fmt.Errorf("unsupported reference: %q", s)
 }
@@ -124,7 +126,7 @@ func newFixedPublish(base name.Repository, entries map[string]v1.Hash) publish.I
 }
 
 // Publish implements publish.Interface
-func (f *fixedPublish) Publish(_ v1.Image, s string) (name.Reference, error) {
+func (f *fixedPublish) Publish(_ steve.Interface, s string) (name.Reference, error) {
 	h, ok := f.entries[s]
 	if !ok {
 		return nil, fmt.Errorf("unsupported importpath: %q", s)
