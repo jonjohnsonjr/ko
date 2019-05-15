@@ -17,6 +17,7 @@ package build
 import (
 	"archive/tar"
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	gb "go/build"
@@ -29,6 +30,7 @@ import (
 
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
+	"github.com/google/go-containerregistry/pkg/v1/partial"
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
 	"github.com/google/go-containerregistry/pkg/v1/types"
 	"github.com/google/ko/pkg/steve"
@@ -371,7 +373,32 @@ func (gb *gobuild) Build(s string) (steve.Interface, error) {
 
 	switch base.Type() {
 	case types.OCIImageIndex, types.DockerManifestList:
-		// We need to publish an image for each entry in the index.
+		idx, err := base.ImageIndex()
+		if err != nil {
+			return nil, err
+		}
+		built, err := newIndex(idx)
+		if err != nil {
+			return nil, err
+		}
+		im, err := idx.IndexManifest()
+		if err != nil {
+			return nil, err
+		}
+		for _, desc := range im.Manifests {
+			baseImage, err := idx.Image(desc.Digest)
+			if err != nil {
+				return nil, err
+			}
+			img, err := gb.buildImage(s, baseImage)
+			if err != nil {
+				return nil, err
+			}
+			if err := built.AddImage(img, desc); err != nil {
+				return nil, err
+			}
+		}
+		return steve.Index(built)
 	default:
 		baseImage, err := base.Image()
 		if err != nil {
@@ -385,4 +412,80 @@ func (gb *gobuild) Build(s string) (steve.Interface, error) {
 	}
 
 	return nil, fmt.Errorf("oops")
+}
+
+type index struct {
+	manifest *v1.IndexManifest
+	images   map[v1.Hash]v1.Image
+}
+
+func newIndex(original v1.ImageIndex) (*index, error) {
+	manifest, err := original.IndexManifest()
+	if err != nil {
+		return nil, err
+	}
+
+	// Clear the manifests from the original, we'll populate that in AddImage.
+	manifest.Manifests = []v1.Descriptor{}
+	return &index{
+		manifest: manifest,
+		images:   make(map[v1.Hash]v1.Image),
+	}, nil
+}
+
+// AddImage adds the newly built image to the index and updates the digest and
+// size of the descriptor.
+func (i *index) AddImage(img v1.Image, original v1.Descriptor) error {
+	h, err := img.Digest()
+	if err != nil {
+		return err
+	}
+	i.images[h] = img
+
+	b, err := img.RawManifest()
+	if err != nil {
+		return err
+	}
+
+	updated := original
+	updated.Digest = h
+	updated.Size = int64(len(b))
+
+	i.manifest.Manifests = append(i.manifest.Manifests, updated)
+	return nil
+}
+
+func (i *index) MediaType() (types.MediaType, error) {
+	mt := i.manifest.MediaType
+	if string(mt) != "" {
+		return mt, nil
+	}
+	return types.OCIImageIndex, nil
+}
+
+func (i *index) Digest() (v1.Hash, error) {
+	return partial.Digest(i)
+}
+
+func (i *index) IndexManifest() (*v1.IndexManifest, error) {
+	return i.manifest, nil
+}
+
+func (i *index) RawManifest() ([]byte, error) {
+	im, err := i.IndexManifest()
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(im)
+}
+
+func (i *index) Image(h v1.Hash) (v1.Image, error) {
+	if img, ok := i.images[h]; ok {
+		return img, nil
+	}
+	return nil, fmt.Errorf("no image with hash %s", h)
+}
+
+func (i *index) ImageIndex(h v1.Hash) (v1.ImageIndex, error) {
+	return nil, fmt.Errorf("no index with hash %s", h)
 }
