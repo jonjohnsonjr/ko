@@ -120,7 +120,7 @@ func build(ip string, p v1.Platform, disableOptimizations bool) (string, error) 
 	cmd := exec.Command("go", args...)
 
 	// Last one wins
-	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS="+p.OS, "GOARCH=", p.Architecture)
+	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS="+p.OS, "GOARCH="+p.Architecture)
 
 	var output bytes.Buffer
 	cmd.Stderr = &output
