@@ -50,11 +50,11 @@ func gobuildOptions(do *options.DebugOptions) ([]build.Option, error) {
 }
 
 func makeBuilder(do *options.DebugOptions) (*build.Caching, error) {
-	opt, err := gobuildOptions(do)
+	_, err := gobuildOptions(do)
 	if err != nil {
 		log.Fatalf("error setting up builder options: %v", err)
 	}
-	innerBuilder, err := build.NewGo(opt...)
+	innerBuilder, err := build.NewDocker()
 	if err != nil {
 		return nil, err
 	}
