@@ -29,8 +29,12 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/containerd/containerd/platforms"
+
+	"github.com/google/go-containerregistry/pkg/authn"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
 )
 
@@ -40,11 +44,12 @@ const (
 )
 
 // GetBase takes an importpath and returns a base v1.Image.
-type GetBase func(string) (v1.Image, error)
+type GetBase func(string, ...remote.Option) (v1.Image, error)
 type builder func(string, v1.Platform, bool) (string, error)
 
 type gobuild struct {
 	getBase              GetBase
+	platform             string
 	creationTime         v1.Time
 	build                builder
 	disableOptimizations bool
@@ -56,6 +61,7 @@ type Option func(*gobuildOpener) error
 
 type gobuildOpener struct {
 	getBase              GetBase
+	platform             string
 	creationTime         v1.Time
 	build                builder
 	disableOptimizations bool
@@ -68,6 +74,7 @@ func (gbo *gobuildOpener) Open() (Interface, error) {
 	}
 	return &gobuild{
 		getBase:              gbo.getBase,
+		platform:             gbo.platform,
 		creationTime:         gbo.creationTime,
 		build:                gbo.build,
 		disableOptimizations: gbo.disableOptimizations,
@@ -366,6 +373,19 @@ func (g *gobuild) tarKoData(importpath string) (*bytes.Buffer, error) {
 
 // Build implements build.Interface
 func (gb *gobuild) Build(s string) (v1.Image, error) {
+	pullOpt := []remote.Option{remote.WithAuthFromKeychain(authn.DefaultKeychain)}
+	if gb.platform == "all" {
+		// TODO(#6): Pull an index and publish an index.
+	} else {
+		p, err := platforms.Parse(gb.platform)
+		if err != nil {
+			return nil, err
+		}
+		pullOpt = append(pullOpt, remote.WithPlatform(v1.Platform{
+			OS:           p.OS,
+			Architecture: p.Architecture,
+		}))
+	}
 	// Determine the appropriate base image for this import path.
 	base, err := gb.getBase(s)
 	if err != nil {

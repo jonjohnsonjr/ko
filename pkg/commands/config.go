@@ -21,7 +21,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
@@ -33,13 +32,13 @@ var (
 	baseImageOverrides map[string]name.Reference
 )
 
-func getBaseImage(s string) (v1.Image, error) {
+func getBaseImage(s string, options ...remote.Option) (v1.Image, error) {
 	ref, ok := baseImageOverrides[s]
 	if !ok {
 		ref = defaultBaseImage
 	}
 	log.Printf("Using base %s for %s", ref, s)
-	return remote.Image(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
+	return remote.Image(ref, options...)
 }
 
 func getCreationTime() (*v1.Time, error) {

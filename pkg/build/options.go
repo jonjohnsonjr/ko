@@ -27,6 +27,14 @@ func WithBaseImages(gb GetBase) Option {
 	}
 }
 
+// WithPlatform overrides the platform used when pulling images.
+func WithPlatform(p string) Option {
+	return func(gbo *gobuildOpener) error {
+		gbo.platform = p
+		return nil
+	}
+}
+
 // WithCreationTime is a functional option for overriding the creation
 // time given to images.
 func WithCreationTime(t v1.Time) Option {
