@@ -17,7 +17,6 @@ package build
 import (
 	"context"
 
-	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"golang.org/x/sync/semaphore"
 )
 
@@ -36,7 +35,7 @@ func (l *Limiter) IsSupportedReference(ip string) bool {
 }
 
 // Build implements Interface
-func (l *Limiter) Build(ctx context.Context, ip string) (v1.Image, error) {
+func (l *Limiter) Build(ctx context.Context, ip string) (Result, error) {
 	// TODO(jonjohnsonjr): Build should take a context.Context.
 	if err := l.semaphore.Acquire(context.TODO(), 1); err != nil {
 		return nil, err

@@ -25,12 +25,12 @@ import (
 )
 
 type fixedBuild struct {
-	entries map[string]v1.Image
+	entries map[string]build.Result
 }
 
 // NewFixedBuild returns a build.Interface implementation that simply resolves
 // particular references to fixed v1.Image objects
-func NewFixedBuild(entries map[string]v1.Image) build.Interface {
+func NewFixedBuild(entries map[string]build.Result) build.Interface {
 	return &fixedBuild{entries}
 }
 
@@ -41,7 +41,7 @@ func (f *fixedBuild) IsSupportedReference(s string) bool {
 }
 
 // Build implements build.Interface
-func (f *fixedBuild) Build(_ context.Context, s string) (v1.Image, error) {
+func (f *fixedBuild) Build(_ context.Context, s string) (build.Result, error) {
 	if img, ok := f.entries[s]; ok {
 		return img, nil
 	}
@@ -60,7 +60,7 @@ func NewFixedPublish(base name.Repository, entries map[string]v1.Hash) publish.I
 }
 
 // Publish implements publish.Interface
-func (f *fixedPublish) Publish(_ v1.Image, s string) (name.Reference, error) {
+func (f *fixedPublish) Publish(_ build.Result, s string) (name.Reference, error) {
 	h, ok := f.entries[s]
 	if !ok {
 		return nil, fmt.Errorf("unsupported importpath: %q", s)

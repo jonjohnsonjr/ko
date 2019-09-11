@@ -28,6 +28,8 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/v1/types"
+	"github.com/google/ko/pkg/build"
 	"github.com/spf13/viper"
 )
 
@@ -36,15 +38,24 @@ var (
 	baseImageOverrides map[string]name.Reference
 )
 
-func getBaseImage(s string) (v1.Image, error) {
+func getBaseImage(s string) (build.Result, error) {
 	ref, ok := baseImageOverrides[s]
 	if !ok {
 		ref = defaultBaseImage
 	}
 	log.Printf("Using base %s for %s", ref, s)
-	return remote.Image(ref,
+	desc, err := remote.Get(ref,
 		remote.WithTransport(defaultTransport()),
 		remote.WithAuthFromKeychain(authn.DefaultKeychain))
+	if err != nil {
+		return nil, err
+	}
+	switch desc.MediaType {
+	case types.OCIImageIndex, types.DockerManifestList:
+		return desc.ImageIndex()
+	default:
+		return desc.Image()
+	}
 }
 
 func getCreationTime() (*v1.Time, error) {

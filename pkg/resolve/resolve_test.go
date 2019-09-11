@@ -25,6 +25,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/random"
+	"github.com/google/ko/pkg/build"
 	kotesting "github.com/google/ko/pkg/internal/testing"
 	"gopkg.in/yaml.v3"
 )
@@ -39,7 +40,7 @@ var (
 	bazRef      = "github.com/awesomesauce/baz"
 	baz         = mustRandom()
 	bazHash     = mustDigest(baz)
-	testBuilder = kotesting.NewFixedBuild(map[string]v1.Image{
+	testBuilder = kotesting.NewFixedBuild(map[string]build.Result{
 		fooRef: foo,
 		barRef: bar,
 		bazRef: baz,
@@ -292,8 +293,8 @@ func TestNoStrictKoPrefixRemains(t *testing.T) {
 	}
 }
 
-func mustRandom() v1.Image {
-	img, err := random.Image(1024, 5)
+func mustRandom() build.Result {
+	img, err := random.Index(1024, 5, 1)
 	if err != nil {
 		panic(err)
 	}
@@ -308,7 +309,7 @@ func mustRepository(s string) name.Repository {
 	return n
 }
 
-func mustDigest(img v1.Image) v1.Hash {
+func mustDigest(img build.Result) v1.Hash {
 	d, err := img.Digest()
 	if err != nil {
 		panic(err)

@@ -33,8 +33,10 @@ import (
 	"strings"
 
 	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/empty"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
+	"github.com/google/go-containerregistry/pkg/v1/types"
 )
 
 const (
@@ -42,8 +44,9 @@ const (
 	defaultAppFilename = "ko-app"
 )
 
-// GetBase takes an importpath and returns a base v1.Image.
-type GetBase func(string) (v1.Image, error)
+// GetBase takes an importpath and returns a base image.
+type GetBase func(string) (Result, error)
+
 type builder func(context.Context, string, v1.Platform, bool) (string, error)
 
 type gobuild struct {
@@ -368,13 +371,7 @@ func (g *gobuild) tarKoData(importpath string) (*bytes.Buffer, error) {
 	return buf, walkRecursive(tw, root, kodataRoot)
 }
 
-// Build implements build.Interface
-func (gb *gobuild) Build(ctx context.Context, s string) (v1.Image, error) {
-	// Determine the appropriate base image for this import path.
-	base, err := gb.getBase(s)
-	if err != nil {
-		return nil, err
-	}
+func (gb *gobuild) buildOne(ctx context.Context, s string, base v1.Image) (v1.Image, error) {
 	cf, err := base.ConfigFile()
 	if err != nil {
 		return nil, err
@@ -486,4 +483,66 @@ func updatePath(cf *v1.ConfigFile) {
 
 	// If we get here, we never saw PATH.
 	cf.Config.Env = append(cf.Config.Env, "PATH="+appDir)
+}
+
+// Build implements build.Interface
+func (gb *gobuild) Build(ctx context.Context, s string) (Result, error) {
+	// Determine the appropriate base image for this import path.
+	base, err := gb.getBase(s)
+	if err != nil {
+		return nil, err
+	}
+
+	mt, err := base.MediaType()
+	if err != nil {
+		return nil, err
+	}
+
+	switch mt {
+	case types.OCIImageIndex, types.DockerManifestList:
+		base, ok := base.(v1.ImageIndex)
+		if !ok {
+			return nil, fmt.Errorf("failed to interpret base as index: %v", base)
+		}
+		return gb.buildAll(ctx, s, base)
+	case types.OCIManifestSchema1, types.DockerManifestSchema2:
+		base, ok := base.(v1.Image)
+		if !ok {
+			return nil, fmt.Errorf("failed to interpret base as image: %v", base)
+		}
+		return gb.buildOne(ctx, s, base)
+	default:
+		return nil, fmt.Errorf("base image media type: %s", mt)
+	}
+}
+
+func (gb *gobuild) buildAll(ctx context.Context, s string, base v1.ImageIndex) (v1.ImageIndex, error) {
+	im, err := base.IndexManifest()
+	if err != nil {
+		return nil, err
+	}
+
+	adds := []mutate.IndexAddendum{}
+	for _, desc := range im.Manifests {
+		// This will fail if it's not an image, which is fine for now.
+		base, err := base.Image(desc.Digest)
+		if err != nil {
+			return nil, err
+		}
+		img, err := gb.buildOne(ctx, s, base)
+		if err != nil {
+			return nil, err
+		}
+		adds = append(adds, mutate.IndexAddendum{
+			Add: img,
+			Descriptor: v1.Descriptor{
+				URLs:        desc.URLs,
+				MediaType:   desc.MediaType,
+				Annotations: desc.Annotations,
+				Platform:    desc.Platform,
+			},
+		})
+	}
+
+	return mutate.AppendManifests(empty.Index, adds...), nil
 }

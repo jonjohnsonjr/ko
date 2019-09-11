@@ -19,8 +19,8 @@ import (
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/name"
-	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/random"
+	"github.com/google/ko/pkg/build"
 )
 
 type slowpublish struct {
@@ -30,7 +30,7 @@ type slowpublish struct {
 // slowpublish implements Interface
 var _ Interface = (*slowpublish)(nil)
 
-func (sb *slowpublish) Publish(img v1.Image, ref string) (name.Reference, error) {
+func (sb *slowpublish) Publish(br build.Result, ref string) (name.Reference, error) {
 	time.Sleep(sb.sleep)
 	return makeRef()
 }
@@ -48,7 +48,7 @@ func TestCaching(t *testing.T) {
 	// iterations we use a new random image, which should invalidate the
 	// cached reference from previous iterations.
 	for idx := 0; idx < 3; idx++ {
-		img, _ := random.Image(256, 8)
+		img, _ := random.Index(256, 8, 1)
 
 		start := time.Now()
 		ref1, err := cb.Publish(img, ref)

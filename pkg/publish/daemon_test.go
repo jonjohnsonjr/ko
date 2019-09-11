@@ -49,9 +49,9 @@ func init() {
 
 func TestDaemon(t *testing.T) {
 	importpath := "github.com/google/ko/cmd/ko"
-	img, err := random.Image(1024, 1)
+	img, err := random.Index(1024, 1, 1)
 	if err != nil {
-		t.Fatalf("random.Image() = %v", err)
+		t.Fatalf("random.Index() = %v", err)
 	}
 
 	def := NewDaemon(md5Hash, []string{})
@@ -66,9 +66,9 @@ func TestDaemonTags(t *testing.T) {
 	Tags = nil
 
 	importpath := "github.com/google/ko/cmd/ko"
-	img, err := random.Image(1024, 1)
+	img, err := random.Index(1024, 1, 1)
 	if err != nil {
-		t.Fatalf("random.Image() = %v", err)
+		t.Fatalf("random.Index() = %v", err)
 	}
 
 	def := NewDaemon(md5Hash, []string{"v2.0.0", "v1.2.3", "production"})

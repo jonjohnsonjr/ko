@@ -22,6 +22,8 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/daemon"
+	"github.com/google/go-containerregistry/pkg/v1/types"
+	"github.com/google/ko/pkg/build"
 )
 
 const (
@@ -40,10 +42,44 @@ func NewDaemon(namer Namer, tags []string) Interface {
 	return &demon{namer, tags}
 }
 
+func toImage(br build.Result) (v1.Image, error) {
+	mt, err := br.MediaType()
+	if err != nil {
+		return nil, err
+	}
+
+	switch mt {
+	case types.OCIImageIndex, types.DockerManifestList:
+		idx, ok := br.(v1.ImageIndex)
+		if !ok {
+			return nil, fmt.Errorf("failed to interpret result as index: %v", br)
+		}
+		im, err := idx.IndexManifest()
+		if err != nil {
+			return nil, err
+		}
+		return idx.Image(im.Manifests[0].Digest)
+	case types.OCIManifestSchema1, types.DockerManifestSchema2:
+		img, ok := br.(v1.Image)
+		if !ok {
+			return nil, fmt.Errorf("failed to interpret result as image: %v", br)
+		}
+		return img, nil
+	default:
+		return nil, fmt.Errorf("result image media type: %s", mt)
+	}
+}
+
 // Publish implements publish.Interface
-func (d *demon) Publish(img v1.Image, s string) (name.Reference, error) {
+func (d *demon) Publish(br build.Result, s string) (name.Reference, error) {
 	// https://github.com/google/go-containerregistry/issues/212
 	s = strings.ToLower(s)
+
+	// TODO: Do we ever want to write multiple images to the daemon?
+	img, err := toImage(br)
+	if err != nil {
+		return nil, err
+	}
 
 	h, err := img.Digest()
 	if err != nil {
