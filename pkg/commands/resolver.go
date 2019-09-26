@@ -15,50 +15,100 @@
 package commands
 
 import (
-	"errors"
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
 	"os"
+	"os/exec"
+	"strings"
 	"sync"
 
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/ko/pkg/build"
 	"github.com/google/ko/pkg/commands/options"
 	"github.com/google/ko/pkg/publish"
 	"github.com/google/ko/pkg/resolve"
-	"github.com/mattmoor/dep-notify/pkg/graph"
 )
 
-func gobuildOptions(bo *options.BuildOptions) ([]build.Option, error) {
-	creationTime, err := getCreationTime()
-	if err != nil {
-		return nil, err
-	}
-	opts := []build.Option{
-		build.WithBaseImages(getBaseImage),
-	}
-	if creationTime != nil {
-		opts = append(opts, build.WithCreationTime(*creationTime))
-	}
-	if bo.DisableOptimizations {
-		opts = append(opts, build.WithDisabledOptimizations())
-	}
-	return opts, nil
+var singleton = &kopp{imgs: make(map[string]name.Reference)}
+
+type Request struct {
+	Uri string `json:"uri"`
 }
 
-func makeBuilder(bo *options.BuildOptions) (*build.Caching, error) {
-	opt, err := gobuildOptions(bo)
-	if err != nil {
-		log.Fatalf("error setting up builder options: %v", err)
+type Response struct {
+	Uri       string `json:"uri"`
+	Reference string `json:"reference"`
+}
+
+type kopp struct {
+	imgs map[string]name.Reference
+}
+
+func (k *kopp) Publish(img v1.Image, s string) (name.Reference, error) {
+	if ref, ok := k.imgs[s]; ok {
+		return ref, nil
 	}
-	innerBuilder, err := build.NewGo(opt...)
+	return nil, fmt.Errorf("where'd you get this thing: %v", s)
+}
+
+func (k *kopp) IsSupportedReference(s string) bool {
+	if !strings.HasPrefix(s, "ko-") {
+		return false
+	}
+	parts := strings.SplitN(s, "://", 2)
+	if len(parts) != 2 {
+		return false
+	}
+	return true
+}
+
+func (k *kopp) Build(s string) (v1.Image, error) {
+	parts := strings.SplitN(s, "://", 2)
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("not a reference: %s")
+	}
+
+	req := Request{
+		Uri: parts[1],
+	}
+	b, err := json.Marshal(req)
 	if err != nil {
 		return nil, err
 	}
 
+	cmd := exec.Command(parts[0], "build")
+
+	var output bytes.Buffer
+	cmd.Stderr = os.Stderr
+	cmd.Stdout = &output
+	cmd.Stdin = bytes.NewBuffer(b)
+
+	if err := cmd.Run(); err != nil {
+		return nil, err
+	}
+
+	resp := Response{}
+	if err := json.Unmarshal(output.Bytes(), &resp); err != nil {
+		return nil, err
+	}
+
+	ref, err := name.ParseReference(resp.Reference)
+	if err != nil {
+		return nil, err
+	}
+	return remote.Image(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
+}
+
+func makeBuilder(bo *options.BuildOptions) (build.Interface, error) {
+	var innerBuilder build.Interface
+	innerBuilder = singleton
 	innerBuilder = build.NewLimiter(innerBuilder, bo.ConcurrentBuilds)
 
 	// tl;dr Wrap builder in a caching builder.
@@ -81,41 +131,13 @@ func makeBuilder(bo *options.BuildOptions) (*build.Caching, error) {
 }
 
 func makePublisher(no *options.NameOptions, lo *options.LocalOptions, ta *options.TagsOptions) (publish.Interface, error) {
-	// Create the publish.Interface that we will use to publish image references
-	// to either a docker daemon or a container image registry.
-	innerPublisher, err := func() (publish.Interface, error) {
-		namer := options.MakeNamer(no)
-
-		repoName := os.Getenv("KO_DOCKER_REPO")
-		if lo.Local || repoName == publish.LocalDomain {
-			return publish.NewDaemon(namer, ta.Tags), nil
-		}
-		if repoName == "" {
-			return nil, errors.New("KO_DOCKER_REPO environment variable is unset")
-		}
-		_, err := name.NewRepository(repoName)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse environment variable KO_DOCKER_REPO=%q as repository: %v", repoName, err)
-		}
-
-		return publish.NewDefault(repoName,
-			publish.WithAuthFromKeychain(authn.DefaultKeychain),
-			publish.WithNamer(namer),
-			publish.WithTags(ta.Tags),
-			publish.Insecure(lo.InsecureRegistry))
-	}()
-	if err != nil {
-		return nil, err
-	}
-
-	// Wrap publisher in a memoizing publisher implementation.
-	return publish.NewCaching(innerPublisher)
+	return publish.NewCaching(singleton)
 }
 
 // resolvedFuture represents a "future" for the bytes of a resolved file.
 type resolvedFuture chan []byte
 
-func resolveFilesToWriter(builder *build.Caching, publisher publish.Interface, fo *options.FilenameOptions, so *options.SelectorOptions, sto *options.StrictOptions, out io.WriteCloser) {
+func resolveFilesToWriter(builder build.Interface, publisher publish.Interface, fo *options.FilenameOptions, so *options.SelectorOptions, sto *options.StrictOptions, out io.WriteCloser) {
 	defer out.Close()
 
 	// By having this as a channel, we can hook this up to a filesystem
@@ -127,34 +149,7 @@ func resolveFilesToWriter(builder *build.Caching, publisher publish.Interface, f
 	// This tracks filename -> []importpath
 	var sm sync.Map
 
-	var g graph.Interface
 	var errCh chan error
-	var err error
-	if fo.Watch {
-		// Start a dep-notify process that on notifications scans the
-		// file-to-recorded-build map and for each affected file resends
-		// the filename along the channel.
-		g, errCh, err = graph.New(func(ss graph.StringSet) {
-			sm.Range(func(k, v interface{}) bool {
-				key := k.(string)
-				value := v.([]string)
-
-				for _, ip := range value {
-					if ss.Has(ip) {
-						// See the comment above about how "builder" works.
-						builder.Invalidate(ip)
-						fs <- key
-					}
-				}
-				return true
-			})
-		})
-		if err != nil {
-			log.Fatalf("Error creating dep-notify graph: %v", err)
-		}
-		// Cleanup the fsnotify hooks when we're done.
-		defer g.Shutdown()
-	}
 
 	var futures []resolvedFuture
 	for {
@@ -200,26 +195,12 @@ func resolveFilesToWriter(builder *build.Caching, publisher publish.Interface, f
 				if err != nil {
 					// Don't let build errors disrupt the watch.
 					lg := log.Fatalf
-					if fo.Watch {
-						lg = log.Printf
-					}
 					lg("error processing import paths in %q: %v", f, err)
 					return
 				}
 				// Associate with this file the collection of binary import paths.
 				sm.Store(f, recordingBuilder.ImportPaths)
 				ch <- b
-				if fo.Watch {
-					for _, ip := range recordingBuilder.ImportPaths {
-						// Technically we never remove binary targets from the graph,
-						// which will increase our graph's watch load, but the
-						// notifications that they change will result in no affected
-						// yamls, and no new builds or deploys.
-						if err := g.Add(ip); err != nil {
-							log.Fatalf("Error adding importpath to dep graph: %v", err)
-						}
-					}
-				}
 			}(f)
 
 		case b, ok := <-bf:

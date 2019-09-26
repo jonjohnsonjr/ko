@@ -79,7 +79,6 @@ func NewCmdBuild() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "build",
 		Short: "Builds and publishes an image given an import path.",
-		Args:  cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			builder, err := makeBuilder(bo)
 			if err != nil {
@@ -116,7 +115,7 @@ func kobuild(b build.Interface, pub publish.Interface, stdin io.Reader, stdout i
 		}
 
 		req := Request{}
-		if err := json.Unmarshal([]byte(line), req); err != nil {
+		if err := json.Unmarshal([]byte(line), &req); err != nil {
 			return err
 		}
 		log.Printf("%+v", req)
@@ -137,7 +136,11 @@ func kobuild(b build.Interface, pub publish.Interface, stdin io.Reader, stdout i
 			Uri:       req.Uri,
 			Reference: ref.String(),
 		}
-
+		b, err := json.Marshal(resp)
+		if err != nil {
+			return err
+		}
+		fmt.Fprint(stdout, string(b))
 	}
 	return nil
 }
