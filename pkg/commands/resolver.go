@@ -80,29 +80,33 @@ func (k *kopp) Build(s string) (v1.Image, error) {
 	}
 	b, err := json.Marshal(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("json.Marshal: %v", err)
 	}
+	b = append(b, '\n')
 
 	cmd := exec.Command(parts[0], "build")
 
-	var output bytes.Buffer
+	var out bytes.Buffer
 	cmd.Stderr = os.Stderr
-	cmd.Stdout = &output
+	cmd.Stdout = &out
 	cmd.Stdin = bytes.NewBuffer(b)
 
 	if err := cmd.Run(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("cmd.Run: %v", err)
 	}
 
+	output := strings.TrimSpace(out.String())
+
 	resp := Response{}
-	if err := json.Unmarshal(output.Bytes(), &resp); err != nil {
-		return nil, err
+	if err := json.Unmarshal([]byte(output), &resp); err != nil {
+		return nil, fmt.Errorf("json.Unmarshal: %v", err)
 	}
 
 	ref, err := name.ParseReference(resp.Reference)
 	if err != nil {
 		return nil, err
 	}
+	k.imgs[s] = ref
 	return remote.Image(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
 }
 

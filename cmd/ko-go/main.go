@@ -23,6 +23,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/authn"
@@ -114,11 +115,15 @@ func kobuild(b build.Interface, pub publish.Interface, stdin io.Reader, stdout i
 			return fmt.Errorf("error when reading from stdin: %v", err)
 		}
 
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
 		req := Request{}
 		if err := json.Unmarshal([]byte(line), &req); err != nil {
-			return err
+			return fmt.Errorf("erroring unmarshalling: %v", err)
 		}
-		log.Printf("%+v", req)
 		importpath := req.Uri
 		if !b.IsSupportedReference(importpath) {
 			return fmt.Errorf("importpath %q is not supported", importpath)
