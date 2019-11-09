@@ -34,8 +34,8 @@ import (
 func main() {
 	// Parent command to which all subcommands are added.
 	cmds := &cobra.Command{
-		Use:   "ko-go",
-		Short: "A ko builder for go.",
+		Use:   "ko-docker",
+		Short: "A ko builder for Dockerfiles.",
 		Run: func(cmd *cobra.Command, args []string) {
 			cmd.Help()
 		},
