@@ -15,6 +15,7 @@
 package commands
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"os/exec"
@@ -22,6 +23,7 @@ import (
 	"github.com/google/ko/pkg/commands/options"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	"golang.org/x/sync/errgroup"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 )
 
@@ -110,7 +112,11 @@ func addApply(topLevel *cobra.Command) {
 				log.Fatalf("error piping to 'kubectl apply': %v", err)
 			}
 
-			go func() {
+			ctx := createCancellableContext()
+
+			// Make sure builds are cancelled if kubectl apply fails.
+			g, ctx := errgroup.WithContext(ctx)
+			g.Go(func() error {
 				// kubectl buffers data before starting to apply it, which
 				// can lead to resources being created more slowly than desired.
 				// In the case of --watch, it can lead to resources not being
@@ -119,16 +125,25 @@ func addApply(topLevel *cobra.Command) {
 				// which kubectl will discard.
 				// See https://github.com/google/go-containerregistry/pull/348
 				for i := 0; i < 1000; i++ {
-					stdin.Write([]byte("---\n"))
+					if _, err := stdin.Write([]byte("---\n")); err != nil {
+						return err
+					}
 				}
 				// Once primed kick things off.
-				ctx := createCancellableContext()
 				resolveFilesToWriter(ctx, builder, publisher, fo, so, sto, stdin)
-			}()
+				return nil
+			})
 
-			// Run it.
-			if err := kubectlCmd.Run(); err != nil {
-				log.Fatalf("error executing 'kubectl apply': %v", err)
+			g.Go(func() error {
+				// Run it.
+				if err := kubectlCmd.Run(); err != nil {
+					return fmt.Errorf("error executing 'kubectl apply': %v", err)
+				}
+				return nil
+			})
+
+			if err := g.Wait(); err != nil {
+				log.Fatal(err)
 			}
 		},
 	}
