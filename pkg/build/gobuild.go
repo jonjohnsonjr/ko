@@ -37,6 +37,7 @@ import (
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/empty"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
+	"github.com/google/go-containerregistry/pkg/v1/partial"
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
 	"github.com/google/go-containerregistry/pkg/v1/types"
 )
@@ -45,6 +46,9 @@ const (
 	appDir             = "/ko-app"
 	defaultAppFilename = "ko-app"
 )
+
+type diffIDToDescriptor map[v1.Hash]v1.Descriptor
+type buildIDToDiffID map[string]v1.Hash
 
 // GetBase takes an importpath and returns a base image.
 type GetBase func(string) (Result, error)
@@ -62,6 +66,10 @@ type gobuild struct {
 	disableOptimizations bool
 	mod                  *modules
 	buildContext         buildContext
+
+	// key is file path
+	buildToDiff map[string]buildIDToDiffID
+	diffToDesc  map[string]diffIDToDescriptor
 }
 
 // Option is a functional option for NewGo.
@@ -80,6 +88,7 @@ func (gbo *gobuildOpener) Open() (Interface, error) {
 	if gbo.getBase == nil {
 		return nil, errors.New("a way of providing base images must be specified, see build.WithBaseImages")
 	}
+
 	return &gobuild{
 		getBase:              gbo.getBase,
 		creationTime:         gbo.creationTime,
@@ -87,6 +96,8 @@ func (gbo *gobuildOpener) Open() (Interface, error) {
 		disableOptimizations: gbo.disableOptimizations,
 		mod:                  gbo.mod,
 		buildContext:         gbo.buildContext,
+		buildToDiff:          map[string]buildIDToDiffID{},
+		diffToDesc:           map[string]diffIDToDescriptor{},
 	}, nil
 }
 
@@ -531,18 +542,40 @@ func (g *gobuild) buildOne(ctx context.Context, s string, base v1.Image, platfor
 
 	appPath := path.Join(appDir, appFilename(ref.Path()))
 
-	// Construct a tarball with the binary and produce a layer.
-	binaryLayerBuf, err := tarBinary(appPath, file)
-	if err != nil {
-		return nil, err
+	var binaryLayer v1.Layer
+	if os.Getenv("KO_CACHE_META") != "" {
+		binaryLayer, err = g.buildLazyLayer(ctx, appPath, file)
+		if err != nil {
+			log.Printf("Cache miss: %s for %s: %v", ref.Path(), platformToString(*platform), err)
+
+			// Make typecheck below fail
+			binaryLayer = nil
+		} else {
+			log.Printf("Cached: %s for %s", ref.Path(), platformToString(*platform))
+		}
 	}
-	binaryLayerBytes := binaryLayerBuf.Bytes()
-	binaryLayer, err := tarball.LayerFromOpener(func() (io.ReadCloser, error) {
-		return ioutil.NopCloser(bytes.NewBuffer(binaryLayerBytes)), nil
-	})
-	if err != nil {
-		return nil, err
+
+	// Cache miss.
+	if _, ok := binaryLayer.(*lazyLayer); !ok {
+		// Construct a tarball with the binary and produce a layer.
+		binaryLayerBuf, err := tarBinary(appPath, file)
+		if err != nil {
+			return nil, err
+		}
+		binaryLayerBytes := binaryLayerBuf.Bytes()
+		binaryLayer, err = tarball.LayerFromOpener(func() (io.ReadCloser, error) {
+			return ioutil.NopCloser(bytes.NewBuffer(binaryLayerBytes)), nil
+		})
+		if err != nil {
+			return nil, err
+		}
+		if os.Getenv("KO_CACHE_META") != "" {
+			if err := g.cacheLayerMeta(ctx, file, binaryLayer); err != nil {
+				log.Printf("failed to cache metadata for %s: %v", s, err)
+			}
+		}
 	}
+
 	layers = append(layers, mutate.Addendum{
 		Layer: binaryLayer,
 		History: v1.History{
@@ -676,4 +709,151 @@ func (g *gobuild) buildAll(ctx context.Context, s string, base v1.ImageIndex) (v
 	}
 
 	return mutate.IndexMediaType(mutate.AppendManifests(empty.Index, adds...), baseType), nil
+}
+
+// TODO: existence check?
+func getBuildId(ctx context.Context, file string) (string, error) {
+	cmd := exec.CommandContext(ctx, "go", "tool", "buildid", file)
+	var output bytes.Buffer
+	cmd.Stderr = &output
+	cmd.Stdout = &output
+
+	if err := cmd.Run(); err != nil {
+		log.Printf("Unexpected error running \"go tool buildid %s\": %v\n%v", err, file, output.String())
+		return "", err
+	}
+	return strings.TrimSpace(output.String()), nil
+}
+
+// TODO: mutex?
+func (g *gobuild) readBuildToDiff(ctx context.Context, file string) (buildIDToDiffID, error) {
+	if btod, ok := g.buildToDiff[file]; ok {
+		return btod, nil
+	}
+
+	btodf, err := os.Open(filepath.Join(filepath.Dir(file), "buildid-to-diffid"))
+	if err != nil {
+		return nil, err
+	}
+	defer btodf.Close()
+
+	var btod buildIDToDiffID
+	if err := json.NewDecoder(btodf).Decode(&btod); err != nil {
+		return nil, err
+	}
+	g.buildToDiff[file] = btod
+	return btod, nil
+}
+
+func (g *gobuild) readDiffToDesc(ctx context.Context, file string) (diffIDToDescriptor, error) {
+	if dtod, ok := g.diffToDesc[file]; ok {
+		return dtod, nil
+	}
+
+	dtodf, err := os.Open(filepath.Join(filepath.Dir(file), "diffid-to-descriptor"))
+	if err != nil {
+		return nil, err
+	}
+	defer dtodf.Close()
+
+	var dtod diffIDToDescriptor
+	if err := json.NewDecoder(dtodf).Decode(&dtod); err != nil {
+		return nil, err
+	}
+	g.diffToDesc[file] = dtod
+	return dtod, nil
+}
+
+func (g *gobuild) buildLazyLayer(ctx context.Context, appPath, file string) (*lazyLayer, error) {
+	buildid, err := getBuildId(ctx, file)
+	if err != nil {
+		return nil, err
+	}
+
+	if buildid == "" {
+		return nil, fmt.Errorf("no buildid for %s", file)
+	}
+
+	btod, err := g.readBuildToDiff(ctx, file)
+	if err != nil {
+		return nil, err
+	}
+	dtod, err := g.readDiffToDesc(ctx, file)
+	if err != nil {
+		return nil, err
+	}
+
+	diffid, ok := btod[buildid]
+	if !ok {
+		return nil, fmt.Errorf("no diffid for %q", buildid)
+	}
+
+	desc, ok := dtod[diffid]
+	if !ok {
+		return nil, fmt.Errorf("no desc for %q", diffid)
+	}
+
+	return &lazyLayer{
+		diffid: diffid,
+		desc:   desc,
+		tarBinary: func() (*bytes.Buffer, error) {
+			return tarBinary(appPath, file)
+		},
+	}, nil
+}
+
+// Compute new layer metadata and cache it in-mem and on-disk.
+func (g *gobuild) cacheLayerMeta(ctx context.Context, file string, layer v1.Layer) error {
+	buildid, err := getBuildId(ctx, file)
+	if err != nil {
+		return err
+	}
+
+	desc, err := partial.Descriptor(layer)
+	if err != nil {
+		return err
+	}
+
+	diffid, err := layer.DiffID()
+	if err != nil {
+		return err
+	}
+
+	btod, ok := g.buildToDiff[file]
+	if !ok {
+		btod = buildIDToDiffID{}
+	}
+	btod[buildid] = diffid
+
+	dtod, ok := g.diffToDesc[file]
+	if !ok {
+		dtod = diffIDToDescriptor{}
+	}
+	dtod[diffid] = *desc
+
+	btodf, err := os.OpenFile(filepath.Join(filepath.Dir(file), "buildid-to-diffid"), os.O_RDWR|os.O_CREATE, 0755)
+	if err != nil {
+		return err
+	}
+	defer btodf.Close()
+
+	dtodf, err := os.OpenFile(filepath.Join(filepath.Dir(file), "diffid-to-descriptor"), os.O_RDWR|os.O_CREATE, 0755)
+	if err != nil {
+		return err
+	}
+	defer dtodf.Close()
+
+	enc := json.NewEncoder(btodf)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(&btod); err != nil {
+		return err
+	}
+
+	enc = json.NewEncoder(dtodf)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(&dtod); err != nil {
+		return err
+	}
+
+	return nil
 }
