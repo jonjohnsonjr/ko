@@ -551,7 +551,7 @@ func (g *gobuild) buildOne(ctx context.Context, s string, base v1.Image, platfor
 			// Make typecheck below fail
 			binaryLayer = nil
 		} else {
-			log.Printf("Cached: %s for %s", ref.Path(), platformToString(*platform))
+			log.Printf("Cache hit: %s for %s", ref.Path(), platformToString(*platform))
 		}
 	}
 
@@ -572,6 +572,8 @@ func (g *gobuild) buildOne(ctx context.Context, s string, base v1.Image, platfor
 		if os.Getenv("KO_CACHE_META") != "" {
 			if err := g.cacheLayerMeta(ctx, file, binaryLayer); err != nil {
 				log.Printf("failed to cache metadata for %s: %v", s, err)
+			} else {
+				log.Printf("Cached %s for %s under %s", ref.Path(), platformToString(*platform), filepath.Dir(file))
 			}
 		}
 	}
