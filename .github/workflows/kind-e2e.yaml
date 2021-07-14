@@ -125,7 +125,7 @@ jobs:
 
     - name: Wait for ready nodes
       run: |
-        kubectl wait --timeout=2m --for=condition=Ready nodes --all
+        kubectl cluster-info --context kind-kind
 
     - name: Run Smoke Test
       run: |
