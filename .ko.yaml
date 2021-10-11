@@ -1,1 +1,1 @@
-defaultBaseImage: gcr.io/distroless/static:nonroot
+defaultBaseImage: gcr.io/distroless/static@sha256:a5635fa9dda1cf81666d8c288130bf3519bdeab1b7ed717db496a73d25d1b35c

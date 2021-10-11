@@ -29,9 +29,13 @@ import (
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/authn"
+	"github.com/google/go-containerregistry/pkg/logs"
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/daemon"
+	"github.com/google/go-containerregistry/pkg/v1/layout"
+	"github.com/google/go-containerregistry/pkg/v1/match"
+	"github.com/google/go-containerregistry/pkg/v1/partial"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/types"
 	"github.com/google/ko/pkg/build"
@@ -74,9 +78,48 @@ func getBaseImage(platform string, bo *options.BuildOptions) build.GetBase {
 		if bo.InsecureRegistry {
 			nameOpts = append(nameOpts, name.Insecure)
 		}
+
 		ref, err := name.ParseReference(baseImage, nameOpts...)
 		if err != nil {
 			return nil, nil, fmt.Errorf("parsing base image (%q): %v", baseImage, err)
+		}
+
+		// TODO(jonjohnsonjr): Figure out a better way to compose these things.
+		// TODO: Pull this out into a func.
+		if dgst, ok := ref.(name.Digest); ok {
+			cacheDir, err := os.UserCacheDir()
+			if err != nil {
+				return nil, nil, fmt.Errorf("could not find cache dir: %v", err)
+			}
+			imgcache := filepath.Join(cacheDir, "ko", "img")
+			root, err := layout.ImageIndexFromPath(imgcache)
+			if err != nil {
+				// TODO: Ignore missing?
+				return nil, nil, fmt.Errorf("failed to read index: %v", err)
+			}
+
+			h, err := v1.NewHash(dgst.Identifier())
+			if err != nil {
+				return nil, nil, err
+			}
+			manifests, err := partial.FindManifests(root, match.Digests(h))
+			if err != nil {
+				return nil, nil, err
+			}
+			if len(manifests) == 0 {
+				return nil, nil, fmt.Errorf("TODO: walk things looking for image??")
+			}
+
+			desc := manifests[0]
+			logs.Progress.Printf("found %v in %v", ref, imgcache)
+			if desc.MediaType.IsIndex() {
+				idx, err := root.ImageIndex(h)
+				return ref, idx, err
+			}
+			img, err := root.Image(h)
+			return ref, img, nil
+		} else {
+			logs.Warn.Printf("not a digest!")
 		}
 
 		// For ko.local, look in the daemon.
